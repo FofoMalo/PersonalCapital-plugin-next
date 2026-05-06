@@ -21,14 +21,13 @@ var require_constants = __commonJS({
       strategyPath: "finance/strategy.md",
       dashboardPath: "finance/Dashboard.md",
       ledgerNotePath: "finance/Ledger.md",
-      wantsQueuePath: "finance/Data/wants_queue.md",
       ledgerViewMode: "classic",
-      homeCurrency: "RUB",
-      homeCurrencySymbol: "\u20BD",
+      homeCurrency: "EUR",
+      homeCurrencySymbol: "\u20AC",
       // FX rates — two-layer model: manual overrides take precedence over auto-fetched.
       // Kept as { CURRENCY: rateToHome }. Missing key = no silent 1.0 fallback.
       fxRatesManual: {},
-      fxRatesAuto: { RUB: 1, USD: 90, EUR: 98, CNY: 12.5 },
+      fxRatesAuto: { EUR: 1, USD: 1.08, GBP: 0.85, CHF: 0.94 },
       fxRatesUpdated: null,
       fxAutoFetch: true,
       fxSourceLabel: "",
@@ -49,10 +48,6 @@ var require_constants = __commonJS({
       onboardingDone: false,
       migrationDone: false,
       personalContext: "",
-      strategyEnabled: false,
-      targetCore: 0,
-      targetFlash: 0,
-      targetReserve: 0
     };
     module2.exports = {
       MONTH_KEYS: MONTH_KEYS2,
@@ -89,7 +84,7 @@ var require_utils = __commonJS({
     }
     function fmt(n, decimals = 0) {
       if (n == null || Number.isNaN(n)) return "\u2014";
-      return new Intl.NumberFormat("ru-RU", {
+      return new Intl.NumberFormat("en-US", {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals
       }).format(n);
@@ -395,7 +390,7 @@ var require_io2 = __commonJS({
           name: fm.name || file.basename,
           type: fm.type || "bank",
           bank: fm.bank || "",
-          currency: fm.currency || settings.homeCurrency || "RUB",
+          currency: fm.currency || settings.homeCurrency || "EUR",
           liquid: fm.liquid !== false,
           locked: fm.locked === true,
           initialBalance: toNum(fm.initial_balance),
@@ -448,7 +443,7 @@ var require_fx = __commonJS({
     var { requestUrl } = require("obsidian");
     function resolveFxRate(currency, settings) {
       const c = String(currency || "").toUpperCase();
-      const home = String(settings.homeCurrency || "RUB").toUpperCase();
+      const home = String(settings.homeCurrency || "EUR").toUpperCase();
       if (!c) return null;
       if (c === home) return 1;
       const manual = settings.fxRatesManual?.[c];
@@ -456,35 +451,6 @@ var require_fx = __commonJS({
       const auto = settings.fxRatesAuto?.[c];
       if (auto != null && auto > 0) return auto;
       return null;
-    }
-    async function fetchCbrRates() {
-      const url = "https://www.cbr.ru/scripts/XML_daily.asp";
-      const resp = await requestUrl({ url, method: "GET" });
-      let text;
-      if (resp.arrayBuffer) {
-        try {
-          text = new TextDecoder("windows-1251").decode(resp.arrayBuffer);
-        } catch (_) {
-          text = resp.text;
-        }
-      } else {
-        text = resp.text;
-      }
-      const doc = new DOMParser().parseFromString(text, "text/xml");
-      const rates = { RUB: 1 };
-      const valutes = doc.getElementsByTagName("Valute");
-      for (let i = 0; i < valutes.length; i++) {
-        const v = valutes[i];
-        const code = v.getElementsByTagName("CharCode")[0]?.textContent?.trim();
-        const vRate = v.getElementsByTagName("VunitRate")[0]?.textContent?.trim();
-        if (!code || !vRate) continue;
-        const num = parseFloat(vRate.replace(",", "."));
-        if (!Number.isFinite(num) || num <= 0) continue;
-        rates[code.toUpperCase()] = num;
-      }
-      const root = doc.getElementsByTagName("ValCurs")[0];
-      const pubDate = root?.getAttribute("Date") || null;
-      return { rates, source: "CBR", pubDate };
     }
     async function fetchYahooRate(pairSymbol) {
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(pairSymbol)}`;
@@ -524,24 +490,18 @@ var require_fx = __commonJS({
       if (!settings.fxAutoFetch) {
         return { updated: false, reason: "auto-fetch disabled" };
       }
-      const home = String(settings.homeCurrency || "RUB").toUpperCase();
+      const home = String(settings.homeCurrency || "EUR").toUpperCase();
       try {
-        let result;
-        if (home === "RUB") {
-          result = await fetchCbrRates();
-        } else {
-          const currencies = Array.from(/* @__PURE__ */ new Set([
-            ...Object.keys(settings.fxRatesAuto || {}),
-            ...Object.keys(settings.fxRatesManual || {}),
-            "USD",
-            "EUR",
-            "RUB",
-            "CNY",
-            "GBP",
-            "JPY"
-          ])).map((c) => c.toUpperCase());
-          result = await fetchYahooRates(home, currencies);
-        }
+        const currencies = Array.from(/* @__PURE__ */ new Set([
+          ...Object.keys(settings.fxRatesAuto || {}),
+          ...Object.keys(settings.fxRatesManual || {}),
+          "USD",
+          "EUR",
+          "GBP",
+          "CHF",
+          "JPY"
+        ])).map((c) => c.toUpperCase());
+        const result = await fetchYahooRates(home, currencies);
         if (!result.rates || Object.keys(result.rates).length === 0) {
           return { updated: false, error: "no rates returned" };
         }
@@ -554,7 +514,7 @@ var require_fx = __commonJS({
         return { updated: false, error: e.message || String(e) };
       }
     }
-    module2.exports = { resolveFxRate, updateFxRates, fetchCbrRates, fetchYahooRates };
+    module2.exports = { resolveFxRate, updateFxRates, fetchYahooRates };
   }
 });
 
@@ -587,7 +547,7 @@ var require_flows = __commonJS({
         const fm = cache?.frontmatter ?? {};
         const assetName = file.basename;
         const assetId = fm.id ? String(fm.id) : null;
-        const currency = String(fm.currency || "RUB").toUpperCase();
+        const currency = String(fm.currency || "EUR").toUpperCase();
         const fxRaw = resolveFxRate(currency, settings);
         const fx = fxRaw ?? 0;
         const fxMissing = fxRaw == null;
@@ -951,123 +911,6 @@ var require_timeline = __commonJS({
   }
 });
 
-// src/budget/baskets.js
-var require_baskets = __commonJS({
-  "src/budget/baskets.js"(exports2, module2) {
-    var { fmt } = require_utils();
-    var { getLiquidTotal } = require_balance();
-    var BASKET_META = {
-      core: { label: "Core", color: "#6366f1", icon: "\u{1F3DB}" },
-      flash: { label: "Flash", color: "#f59e0b", icon: "\u26A1" },
-      reserve: { label: "Reserve", color: "#34d399", icon: "\u{1F6E1}" }
-    };
-    function classifyAssetBasket(asset) {
-      if (asset.basket) return asset.basket;
-      const t = (asset.assetType || asset.type || "shares").toLowerCase();
-      if (t === "bond" || t === "deposit") return "core";
-      if (t === "etf" || t === "fund" || t === "index") return "core";
-      const name = (asset.name || "").toUpperCase();
-      const ticker = (asset.ticker || asset.name || "").toUpperCase();
-      if (name.endsWith("@") || ticker.endsWith("@")) return "core";
-      if (/\bETF\b|\bINDEX\b|\bФОНД\b|\bИНДЕКС\b/i.test(name)) return "core";
-      if (/^RU\d{3}[A-Z]\d/.test(ticker)) return "core";
-      if (t === "material") return null;
-      if (t === "crypto") return "flash";
-      return "flash";
-    }
-    function buildBasketData(assets, settings, accounts, allLedger) {
-      const baskets = {
-        core: { value: 0, assets: [], target: settings.targetCore || 0 },
-        flash: { value: 0, assets: [], target: settings.targetFlash || 0 },
-        reserve: { value: 0, assets: [], target: settings.targetReserve || 0 }
-      };
-      for (const a of assets) {
-        const bk = classifyAssetBasket(a);
-        if (bk && baskets[bk]) {
-          baskets[bk].value += a.currentValueRub;
-          baskets[bk].assets.push(a);
-        }
-      }
-      const liq = getLiquidTotal(settings, accounts, allLedger);
-      if (liq > 0) baskets.reserve.value += liq;
-      const total = baskets.core.value + baskets.flash.value + baskets.reserve.value;
-      for (const bk of Object.values(baskets)) bk.pct = total > 0 ? bk.value / total * 100 : 0;
-      return { baskets, total };
-    }
-    function checkBasketTriggers(baskets, settings) {
-      const alerts = [];
-      const hasTargets = (settings.targetCore || 0) + (settings.targetFlash || 0) + (settings.targetReserve || 0) > 0;
-      if (!hasTargets) return alerts;
-      const THRESHOLD = 5;
-      for (const [key, meta] of Object.entries(BASKET_META)) {
-        const bk = baskets[key];
-        if (!bk.target || bk.target <= 0) continue;
-        const diff = bk.pct - bk.target;
-        if (Math.abs(diff) >= THRESHOLD) {
-          const dir = diff > 0 ? "overweight" : "underweight";
-          alerts.push(`${meta.icon} ${meta.label}: ${dir} by ${fmt(Math.abs(diff), 1)}% (${fmt(bk.pct, 1)}% vs ${bk.target}% target)`);
-        }
-      }
-      return alerts;
-    }
-    function checkInstrumentTriggers(assets) {
-      const alerts = [];
-      const now = /* @__PURE__ */ new Date();
-      for (const a of assets) {
-        const invested = a.currentValue - a.plAmount;
-        const totalRetPct = invested > 0 ? (a.plAmount + a.passiveIncomeTot) / invested * 100 : 0;
-        const holdMonths = a.initialDate ? (now - new Date(a.initialDate)) / (30.44 * 24 * 3600 * 1e3) : 0;
-        const t = (a.assetType || a.type || "").toLowerCase();
-        if (holdMonths >= 12 && totalRetPct < 0) {
-          alerts.push({
-            type: "underperformer",
-            icon: "\u{1F4C9}",
-            asset: a.name,
-            text: `${a.name}: total return ${fmt(totalRetPct, 1)}% after ${Math.floor(holdMonths)} months`
-          });
-        }
-        if ((t === "bond" || t === "deposit") && holdMonths >= 6) {
-          const yoc = invested > 0 ? a.passiveIncomeTot / invested * 100 : 0;
-          if (yoc < 2) {
-            alerts.push({
-              type: "dividend_dry",
-              icon: "\u{1F4A7}",
-              asset: a.name,
-              text: `${a.name}: yield on cost only ${fmt(yoc, 1)}% \u2014 low for fixed income`
-            });
-          }
-        }
-        if (totalRetPct > 50 && holdMonths >= 1) {
-          const annualized = holdMonths > 0 ? totalRetPct / holdMonths * 12 : totalRetPct;
-          if (annualized > 100) {
-            alerts.push({
-              type: "winner",
-              icon: "\u{1F3C6}",
-              asset: a.name,
-              text: `${a.name}: up ${fmt(totalRetPct, 1)}% in ${Math.floor(holdMonths)} mo \u2014 rapid spike, consider locking profit`
-            });
-          } else if (holdMonths < 3 && totalRetPct > 30) {
-            alerts.push({
-              type: "winner",
-              icon: "\u{1F3C6}",
-              asset: a.name,
-              text: `${a.name}: up ${fmt(totalRetPct, 1)}% in ${Math.floor(holdMonths)} mo \u2014 short-term opportunity`
-            });
-          }
-        }
-      }
-      return alerts;
-    }
-    module2.exports = {
-      BASKET_META,
-      classifyAssetBasket,
-      buildBasketData,
-      checkBasketTriggers,
-      checkInstrumentTriggers
-    };
-  }
-});
-
 // src/report.js
 var require_report = __commonJS({
   "src/report.js"(exports2, module2) {
@@ -1076,7 +919,6 @@ var require_report = __commonJS({
     var { readAccounts: readAccounts2 } = require_io2();
     var { getLiquidTotal } = require_balance();
     var { readAllLedger } = require_io();
-    var { buildBasketData, checkBasketTriggers, checkInstrumentTriggers } = require_baskets();
     async function generateMonthlyReport(app, settings, budget, assets, cfRows, sym) {
       const now = /* @__PURE__ */ new Date();
       const yyyy = now.getFullYear();
@@ -1112,16 +954,7 @@ var require_report = __commonJS({
       const totalReturn = totalPL + totalDiv;
       const totalRetPct = investedBasis > 0 ? totalReturn / investedBasis * 100 : 0;
       const sv = (v) => v >= 0 ? `+ ${fmt(Math.abs(v))}` : `\u2212 ${fmt(Math.abs(v))}`;
-      let allAlerts = [];
-      try {
-        const { baskets } = buildBasketData(assets, settings, null, null);
-        const hasStrategy = (settings.targetCore || 0) + (settings.targetFlash || 0) + (settings.targetReserve || 0) > 0;
-        const basketAlerts = hasStrategy ? checkBasketTriggers(baskets, settings) : [];
-        const instrAlerts = checkInstrumentTriggers(assets);
-        allAlerts = [...basketAlerts, ...instrAlerts.map((t) => `${t.icon} ${t.text}`)];
-      } catch (e) {
-        console.error("Report signals error:", e);
-      }
+      const allAlerts = [];
       const monthPrefix = `${yyyy}-${mm}`;
       let periodBuys = 0, periodSells = 0, periodDivs = 0;
       const periodByAsset = {};
@@ -1747,138 +1580,6 @@ var require_chart = __commonJS({
   }
 });
 
-// src/modals/strategy.js
-var require_strategy = __commonJS({
-  "src/modals/strategy.js"(exports2, module2) {
-    var { Modal: Modal2 } = require("obsidian");
-    var { showNotice: showNotice2, killWheelChange } = require_utils();
-    var StrategyModal = class extends Modal2 {
-      constructor(app, plugin, onSave) {
-        super(app);
-        this.plugin = plugin;
-        this.onSave = onSave;
-      }
-      onOpen() {
-        const { contentEl } = this;
-        contentEl.empty();
-        contentEl.addClass("pc-strategy-modal");
-        const s = this.plugin.settings;
-        const wrap = contentEl.createDiv({ cls: "pc-strategy-form" });
-        wrap.createEl("h2", { cls: "pc-strategy-title", text: "Strategy Targets" });
-        wrap.createEl("p", { cls: "pc-strategy-desc", text: "Set target allocation for each basket. Leave at 0 to skip. Alerts appear here and in reports when allocation drifts more than 5% from target." });
-        const fields = [
-          { key: "targetCore", label: "\u{1F3DB} Core (bonds, ETFs, index)", val: s.targetCore || 0 },
-          { key: "targetFlash", label: "\u26A1 Flash (shares, crypto)", val: s.targetFlash || 0 },
-          { key: "targetReserve", label: "\u{1F6E1} Reserve (deposits, cash)", val: s.targetReserve || 0 }
-        ];
-        const inputs = {};
-        for (const f of fields) {
-          const row = wrap.createDiv({ cls: "pc-strategy-row" });
-          row.createEl("label", { cls: "pc-strategy-label", text: f.label });
-          const inp = row.createEl("input", { cls: "pc-strategy-input", type: "number", attr: { min: "0", max: "100", step: "1" } });
-          inp.value = String(f.val);
-          killWheelChange(inp);
-          inputs[f.key] = inp;
-          row.createEl("span", { cls: "pc-strategy-pct", text: "%" });
-        }
-        const totalRow = wrap.createDiv({ cls: "pc-strategy-total-row" });
-        totalRow.createEl("span", { text: "Total" });
-        const totalVal = totalRow.createEl("span", { cls: "pc-strategy-total-val" });
-        function updateTotal() {
-          let sum = 0;
-          for (const f of fields) sum += parseInt(inputs[f.key].value) || 0;
-          totalVal.textContent = `${sum}%`;
-          totalVal.classList.toggle("pc-chq-neg", sum !== 100 && sum !== 0);
-          totalVal.classList.toggle("pc-chq-pos", sum === 100);
-        }
-        for (const f of fields) inputs[f.key].addEventListener("input", updateTotal);
-        updateTotal();
-        const alertWrap = wrap.createDiv({ cls: "pc-strategy-alerts" });
-        const hasTargets = (s.targetCore || 0) + (s.targetFlash || 0) + (s.targetReserve || 0) > 0;
-        if (hasTargets) {
-          alertWrap.createEl("p", { cls: "pc-strategy-alert-title", text: "Current Alerts" });
-          alertWrap.createEl("p", { cls: "pc-strategy-alert-note", text: "Refresh dashboard to see updated alerts after saving." });
-        }
-        const btnRow = wrap.createDiv({ cls: "pc-strategy-btn-row" });
-        const clearBtn = btnRow.createEl("button", { cls: "pc-strategy-clear-btn", text: "Clear targets" });
-        clearBtn.onclick = async () => {
-          this.plugin.settings.targetCore = 0;
-          this.plugin.settings.targetFlash = 0;
-          this.plugin.settings.targetReserve = 0;
-          this.plugin.settings.strategyEnabled = false;
-          await this.plugin.saveSettings();
-          showNotice2("Strategy targets cleared");
-          this.close();
-          if (this.onSave) this.onSave();
-        };
-        const saveBtn = btnRow.createEl("button", { cls: "mod-cta", text: "Save Strategy" });
-        saveBtn.onclick = async () => {
-          let anySet = false;
-          for (const f of fields) {
-            const v = parseInt(inputs[f.key].value) || 0;
-            this.plugin.settings[f.key] = v;
-            if (v > 0) anySet = true;
-          }
-          this.plugin.settings.strategyEnabled = anySet;
-          await this.plugin.saveSettings();
-          showNotice2("\u2713 Strategy targets saved");
-          this.close();
-          if (this.onSave) this.onSave();
-        };
-      }
-      onClose() {
-        this.contentEl.empty();
-      }
-    };
-    module2.exports = { StrategyModal };
-  }
-});
-
-// src/ui/baskets.js
-var require_baskets2 = __commonJS({
-  "src/ui/baskets.js"(exports2, module2) {
-    var { fmt } = require_utils();
-    var { BASKET_META, buildBasketData } = require_baskets();
-    function renderBaskets(container, assets, settings, sym, app, plugin, accounts, allLedger) {
-      const { StrategyModal } = require_strategy();
-      const { baskets, total } = buildBasketData(assets, settings, accounts, allLedger);
-      const hasTargets = (settings.targetCore || 0) + (settings.targetFlash || 0) + (settings.targetReserve || 0) > 0;
-      const wrap = container.createDiv({ cls: "pc-baskets" });
-      const hdr = wrap.createDiv({ cls: "pc-baskets-header" });
-      hdr.createEl("div", { cls: "pc-baskets-title", text: "Allocation" });
-      const stratBtn = hdr.createEl("button", { cls: "pc-strategy-btn", text: "\u2699 Strategy" });
-      stratBtn.onclick = () => new StrategyModal(app, plugin, () => {
-      }).open();
-      const grid = wrap.createDiv({ cls: "pc-baskets-grid" });
-      for (const [key, meta] of Object.entries(BASKET_META)) {
-        const bk = baskets[key];
-        const onTarget = hasTargets && bk.target > 0 && Math.abs(bk.pct - bk.target) < 5;
-        const over = hasTargets && bk.target > 0 && bk.pct > bk.target;
-        const panel = grid.createDiv({ cls: "pc-basket-panel" });
-        const phdr = panel.createDiv({ cls: "pc-basket-hdr" });
-        phdr.createEl("span", { cls: "pc-basket-icon", text: meta.icon });
-        phdr.createEl("span", { cls: "pc-basket-name", text: meta.label });
-        const pctCls = hasTargets && bk.target > 0 ? onTarget ? "pc-basket-pct pc-basket-pct--ok" : over ? "pc-basket-pct pc-basket-pct--over" : "pc-basket-pct" : "pc-basket-pct";
-        panel.createEl("div", { cls: pctCls, text: `${fmt(bk.pct, 1)}%` });
-        if (hasTargets && bk.target > 0) {
-          const barWrap = panel.createDiv({ cls: "pc-basket-bar-wrap" });
-          const barFill = barWrap.createDiv({ cls: "pc-basket-bar-fill" });
-          barFill.style.width = `${Math.min(bk.pct / bk.target * 100, 100)}%`;
-          barFill.style.background = meta.color;
-          barWrap.createDiv({ cls: "pc-basket-bar-marker" }).style.left = "100%";
-        }
-        const foot = panel.createDiv({ cls: "pc-basket-foot" });
-        foot.createEl("span", { cls: "pc-basket-value", text: `${fmt(bk.value)} ${sym}` });
-        if (hasTargets && bk.target > 0) {
-          foot.createEl("span", { cls: "pc-basket-target", text: `/ ${bk.target}%` });
-        }
-        panel.createEl("div", { cls: "pc-basket-count", text: `${bk.assets.length} instrument${bk.assets.length !== 1 ? "s" : ""}` });
-      }
-    }
-    module2.exports = { renderBaskets };
-  }
-});
-
 // src/assets/parser.js
 var require_parser = __commonJS({
   "src/assets/parser.js"(exports2, module2) {
@@ -2010,85 +1711,6 @@ var require_prices = __commonJS({
       const name = String(fm.name || filename).trim();
       return name.replace(/@+$/, "");
     }
-    async function moexDiscoverMarket(ticker) {
-      const url = `https://iss.moex.com/iss/securities/${encodeURIComponent(ticker)}.json?iss.meta=off&iss.only=boards&boards.columns=secid,boardid,market,engine,is_primary`;
-      try {
-        const resp = await requestUrl({ url, method: "GET" });
-        const rows = resp.json?.boards?.data;
-        if (!rows || rows.length === 0) return null;
-        const primary = rows.find((r) => r[4] === 1) || rows[0];
-        return { engine: primary[3], market: primary[2], board: primary[1] };
-      } catch (e) {
-        console.warn(`[PC] MOEX discover failed for ${ticker}:`, e);
-        return null;
-      }
-    }
-    async function moexGetFaceValue(ticker) {
-      const url = `https://iss.moex.com/iss/securities/${encodeURIComponent(ticker)}.json?iss.meta=off&iss.only=description&description.columns=name,value`;
-      try {
-        const resp = await requestUrl({ url, method: "GET" });
-        const rows = resp.json?.description?.data;
-        if (!rows) return 1e3;
-        const fv = rows.find((r) => r[0] === "FACEVALUE");
-        return fv ? toNum(fv[1]) : 1e3;
-      } catch (_) {
-        return 1e3;
-      }
-    }
-    async function fetchMoexPrices(ticker, fromDate, marketInfo) {
-      if (!marketInfo) return [];
-      const { engine, market, board } = marketInfo;
-      const results = [];
-      let start = 0;
-      const from = fromDate || "2020-01-01";
-      while (true) {
-        const url = `https://iss.moex.com/iss/history/engines/${engine}/markets/${market}/boards/${board}/securities/${encodeURIComponent(ticker)}.json?from=${from}&till=2099-12-31&start=${start}&iss.meta=off&history.columns=TRADEDATE,CLOSE,NUMTRADES`;
-        let data;
-        try {
-          const resp = await requestUrl({ url, method: "GET" });
-          data = resp.json;
-        } catch (e) {
-          console.warn(`[PC] MOEX fetch failed for ${ticker}:`, e);
-          break;
-        }
-        const rows = data?.history?.data;
-        if (!rows || rows.length === 0) break;
-        for (const row of rows) {
-          const [date, close, numTrades] = row;
-          if (close != null && close > 0) {
-            results.push({ date, close });
-          }
-        }
-        if (rows.length < 100) break;
-        start += 100;
-      }
-      return results;
-    }
-    async function fetchMoexDividends(ticker, afterDate) {
-      const url = `https://iss.moex.com/iss/securities/${encodeURIComponent(ticker)}/dividends.json?iss.meta=off`;
-      try {
-        const resp = await requestUrl({ url, method: "GET" });
-        const rows = resp.json?.dividends?.data;
-        if (!rows) return [];
-        return rows.filter((r) => r[2] > afterDate && r[3] != null && r[3] > 0).map((r) => ({ date: r[2], perShare: r[3] }));
-      } catch (e) {
-        console.warn(`[PC] MOEX dividends failed for ${ticker}:`, e);
-        return [];
-      }
-    }
-    async function fetchMoexCoupons(ticker, afterDate) {
-      const url = `https://iss.moex.com/iss/securities/${encodeURIComponent(ticker)}/bondization.json?iss.meta=off&iss.only=coupons&coupons.columns=coupondate,value_rub`;
-      try {
-        const resp = await requestUrl({ url, method: "GET" });
-        const rows = resp.json?.coupons?.data;
-        if (!rows) return [];
-        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        return rows.filter((r) => r[0] > afterDate && r[0] <= today && r[1] != null && r[1] > 0).map((r) => ({ date: r[0], perBond: r[1] }));
-      } catch (e) {
-        console.warn(`[PC] MOEX coupons failed for ${ticker}:`, e);
-        return [];
-      }
-    }
     async function fetchYahooPrices(ticker, fromDate) {
       const from = fromDate ? Math.floor(new Date(fromDate).getTime() / 1e3) : 0;
       const to = Math.floor(Date.now() / 1e3);
@@ -2126,11 +1748,6 @@ var require_prices = __commonJS({
       }
       return { prices, dividends };
     }
-    function getAssetSource(currency, type, ticker) {
-      if (String(type || "").toLowerCase() === "bond") return "moex";
-      if (ticker && /^RU\d{3}[A-Z0-9]+$/i.test(String(ticker))) return "moex";
-      return String(currency || "").toUpperCase() === "RUB" ? "moex" : "yahoo";
-    }
     async function updateSingleAssetPrice(app, file, settings, statusCb) {
       const raw = await app.vault.read(file);
       const fmEnd = raw.indexOf("---", 3);
@@ -2138,7 +1755,7 @@ var require_prices = __commonJS({
       const cache = app.metadataCache.getFileCache(file);
       const fm = cache?.frontmatter ?? {};
       const apiTicker = resolveApiTicker(fm, file.basename);
-      const currency = String(fm.currency || "RUB").toUpperCase();
+      const currency = String(fm.currency || "EUR").toUpperCase();
       const type = String(fm.type || "shares").toLowerCase();
       const lastUp = fm.last_updated || fm.initial_date || "2020-01-01";
       const qty = toNum(fm.current_qty);
@@ -2155,41 +1772,10 @@ var require_prices = __commonJS({
         return { updated: false, ticker: apiTicker, error: "already up to date" };
       }
       if (statusCb) statusCb(apiTicker);
-      const source = getAssetSource(currency, type, apiTicker);
       let latestPrice = null;
       let newDivs = [];
       let newPriceLine = null;
       let pricesSeries = [];
-      if (source === "moex") {
-        const marketInfo = await moexDiscoverMarket(apiTicker);
-        if (!marketInfo) {
-          return { updated: false, ticker: apiTicker, error: "not found on MOEX" };
-        }
-        if (type === "bond") {
-          const coupons = await fetchMoexCoupons(apiTicker, lastUp);
-          for (const c of coupons) {
-            const total = parseFloat((c.perBond * qty).toFixed(2));
-            newDivs.push({ date: c.date, total });
-          }
-        } else {
-          const divs = await fetchMoexDividends(apiTicker, lastUp);
-          for (const d of divs) {
-            const total = parseFloat((d.perShare * qty).toFixed(2));
-            newDivs.push({ date: d.date, total });
-          }
-        }
-        pricesSeries = await fetchMoexPrices(apiTicker, fromDate, marketInfo);
-        if (pricesSeries.length > 0) {
-          const latest = pricesSeries[pricesSeries.length - 1];
-          if (type === "bond") {
-            latestPrice = parseFloat((latest.close / 100 * faceValue).toFixed(2));
-          } else {
-            latestPrice = latest.close;
-          }
-          newPriceLine = `${latest.date} | price | \u2014 | ${latestPrice}`;
-        }
-      } else {
-        const { prices, dividends } = await fetchYahooPrices(apiTicker, fromDate);
         if (prices.length === 0 && dividends.length === 0) {
           return { updated: false, ticker: apiTicker, error: "no new Yahoo data" };
         }
@@ -2205,7 +1791,7 @@ var require_prices = __commonJS({
           latestPrice = latest.close;
           newPriceLine = `${latest.date} | price | \u2014 | ${latestPrice}`;
         }
-      }
+
       if (!newPriceLine && newDivs.length === 0) {
         return { updated: false, ticker: apiTicker, error: "no new data" };
       }
@@ -2337,13 +1923,7 @@ var require_prices = __commonJS({
     }
     module2.exports = {
       resolveApiTicker,
-      moexDiscoverMarket,
-      moexGetFaceValue,
-      fetchMoexPrices,
-      fetchMoexDividends,
-      fetchMoexCoupons,
       fetchYahooPrices,
-      getAssetSource,
       updateSingleAssetPrice,
       updateAllAssetPrices: updateAllAssetPrices2
     };
@@ -2763,7 +2343,7 @@ var require_asset_create = __commonJS({
         tickerIn.placeholder = "e.g. T for \u0422-\u0422\u0435\u0445\u043D\u043E\u043B\u043E\u0433\u0438\u0438, SPBE for SPB Exchange";
         tickerIn.addClass("personal-capital-input");
         const currIn = row("Currency", contentEl.createEl("input", { type: "text" }));
-        currIn.value = "RUB";
+        currIn.value = "EUR";
         currIn.addClass("personal-capital-input");
         const faceWrap = form.createDiv();
         faceWrap.createEl("label", { text: "Face value (bonds only)" });
@@ -2923,7 +2503,7 @@ var require_asset_create = __commonJS({
           if (tickerVal) fmLines.push(`ticker: ${tickerVal}`);
           fmLines.push(
             `type: ${assetType}`,
-            `currency: ${currIn.value.toUpperCase().trim() || "RUB"}`
+            `currency: ${currIn.value.toUpperCase().trim() || "EUR"}`
           );
           if (assetType === "bond" && faceVal) fmLines.push(`face_value: ${faceVal}`);
           if (assetType !== "bond" && assetType !== "deposit") {
@@ -3205,508 +2785,6 @@ var require_assets = __commonJS({
   }
 });
 
-// src/wants-queue.js
-var require_wants_queue = __commonJS({
-  "src/wants-queue.js"(exports2, module2) {
-    var { toNum, getCurrentMonthKey } = require_utils();
-    var { enqueueWrite } = require_write_queue();
-    async function readWantsQueue(app, settings) {
-      const path = settings.wantsQueuePath;
-      const file = app.vault.getAbstractFileByPath(path);
-      if (!file) return [];
-      const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-      if (!fm?.items || !Array.isArray(fm.items)) return [];
-      return fm.items.map((it) => ({
-        name: String(it.name ?? ""),
-        cost: toNum(it.cost),
-        done: it.done ?? null
-      }));
-    }
-    async function writeWantsQueue(app, settings, items) {
-      const path = settings.wantsQueuePath;
-      return enqueueWrite(path, async () => {
-        let file = app.vault.getAbstractFileByPath(path);
-        if (!file) {
-          const dir = path.split("/").slice(0, -1).join("/");
-          if (dir && !app.vault.getAbstractFileByPath(dir)) {
-            await app.vault.createFolder(dir).catch(() => {
-            });
-          }
-          file = await app.vault.create(path, "---\nitems: []\n---\n");
-        }
-        await app.fileManager.processFrontMatter(file, (fm) => {
-          fm.items = items.map((it) => {
-            const o = { name: it.name, cost: it.cost };
-            if (it.done) o.done = it.done;
-            return o;
-          });
-        });
-      });
-    }
-    function cleanupDoneItems(items) {
-      const currentMk = getCurrentMonthKey();
-      return items.filter((it) => !it.done || it.done === currentMk);
-    }
-    function getWantsQueueTotal(items) {
-      return items.filter((it) => !it.done).reduce((s, it) => s + it.cost, 0);
-    }
-    module2.exports = { readWantsQueue, writeWantsQueue, cleanupDoneItems, getWantsQueueTotal };
-  }
-});
-
-// src/ai/snapshot.js
-var require_snapshot = __commonJS({
-  "src/ai/snapshot.js"(exports2, module2) {
-    var { MONTH_NAMES: MONTH_NAMES2 } = require_constants();
-    var { fmt, fmtSigned, getCurrentMonthIdx, getCurrentYear: getCurrentYear2 } = require_utils();
-    var { buildAssetFlowsAsync } = require_flows();
-    var { buildCashflowRows: buildCashflowRows2 } = require_cashflow();
-    var { buildBudgetSummary } = require_summary();
-    var { readCapitalHistory } = require_timeline();
-    var { getAccountBalance, getLiquidTotal } = require_balance();
-    var { readWantsQueue } = require_wants_queue();
-    async function buildDataSnapshot(app, settings) {
-      const af = await buildAssetFlowsAsync(app, settings);
-      const { passiveIncome, saves, assets, savesByMonthKey, accounts, allLedger } = af;
-      const cfRows = buildCashflowRows2(app, settings, allLedger);
-      const budget = buildBudgetSummary(cfRows, settings, af);
-      const history = await readCapitalHistory(app, settings);
-      const wqItems = await readWantsQueue(app, settings);
-      const wqPending = wqItems.filter((it) => !it.done);
-      const sym = settings.homeCurrencySymbol;
-      const investedCapital = assets.reduce((s, a) => s + a.currentValueRub, 0);
-      const liquidTotal = getLiquidTotal(settings, accounts, allLedger);
-      const totalCapital = investedCapital + liquidTotal;
-      const curMonth = MONTH_NAMES2[getCurrentMonthIdx()];
-      const curYear = getCurrentYear2();
-      const lines = [
-        `## Current Period: ${curMonth} ${curYear}`,
-        ``,
-        `## Budget Summary`,
-        `- Active Income:   ${fmt(budget.income)} ${sym}`,
-        `- Passive Income:  ${fmt(budget.passiveIncome)} ${sym}`,
-        `- Total Income:    ${fmt(budget.totalIncome)} ${sym}`,
-        `- Needs:           ${fmt(budget.needs)} ${sym}  (${budget.totalIncome !== 0 ? Math.round(Math.abs(budget.needs) / budget.totalIncome * 100) : 0}% of income)`,
-        `- Wants:           ${fmt(budget.wants)} ${sym}`,
-        `- Saves (actual):  ${fmt(budget.saves)} ${sym}`,
-        `- Saves (target):  ${fmt(budget.savesTarget)} ${sym}  (${settings.savesTargetPct}% of income)`,
-        `- Left (liquid):   ${fmt(budget.left)} ${sym}`,
-        ``,
-        `## Cashflow Breakdown (${curMonth})`,
-        `| Type | Category | Recurring | This Month | Projected Mo. |`,
-        `|---|---|---|---|---|`,
-        ...cfRows.map((r) => {
-          const mk = require_utils().getCurrentMonthKey();
-          const act = r.months[mk] != null ? fmt(r.months[mk]) : "\u2014";
-          const prj = r.projected != null ? fmt(r.projected) : "\u2014";
-          return `| ${r.type} | ${r.emoji} ${r.category} | ${r.recurring ? "\u2713" : ""} | ${act} | ${prj} |`;
-        }),
-        ``,
-        `## Portfolio \u2014 Assets`,
-        `| Ticker | Type | Ccy | Qty | Price | Value | P&L | P&L% | Div/Income |`,
-        `|---|---|---|---|---|---|---|---|---|`,
-        ...assets.map(
-          (a) => `| ${a.name} | ${a.type} | ${a.currency} | ${a.currentQty} | ${a.currentPrice ?? "\u2014"} | ${fmt(a.currentValue, 2)} | ${fmtSigned(a.plAmount, 2)} | ${fmtSigned(a.plPct, 1)}% | ${fmt(a.passiveIncomeTot, 2)} |`
-        ),
-        ``,
-        `## Accounts`,
-        ...accounts && accounts.length > 0 ? [accounts.map((a) => `${a.name} ${fmt(getAccountBalance(a, allLedger))}${a.locked ? " \u{1F512}" : ""}`).join(", ") + ` \u2014 Total: ${fmt(liquidTotal)} ${sym}`] : [`Bank ${fmt(settings.liquidBank ?? 0)}${settings.liquidBankIsLiquid !== false ? "" : " \u{1F512}"}, Broker ${fmt(settings.liquidBrokerCash ?? 0)}${settings.liquidBrokerCashIsLiquid !== false ? "" : " \u{1F512}"}, Cash ${fmt(settings.liquidCash ?? 0)}${settings.liquidCashIsLiquid !== false ? "" : " \u{1F512}"}, Business ${fmt(settings.liquidBusiness ?? 0)}${settings.liquidBusinessIsLiquid ? "" : " \u{1F512}"} \u2014 Total: ${fmt(liquidTotal)} ${sym}`],
-        ``,
-        `## Total Capital`,
-        `Invested: ${fmt(investedCapital)}, Liquid: ${fmt(liquidTotal)}, **Total: ${fmt(totalCapital)} ${sym}**`,
-        ``,
-        ``
-      ];
-      if (wqPending.length > 0) {
-        lines.push(`## Wants Queue (planned purchases)`);
-        lines.push(`| Item | Est. Cost |`);
-        lines.push(`|---|---|`);
-        for (const it of wqPending) {
-          lines.push(`| ${it.name} | ${fmt(it.cost)} ${sym} |`);
-        }
-        lines.push(`- Queue total: ${fmt(wqPending.reduce((s, it) => s + it.cost, 0))} ${sym}`);
-        lines.push(``);
-      }
-      return { lines, budget, assets, history, totalCapital, curMonth, curYear };
-    }
-    module2.exports = { buildDataSnapshot };
-  }
-});
-
-// src/ai/prompts.js
-var require_prompts = __commonJS({
-  "src/ai/prompts.js"(exports2, module2) {
-    var { fmt } = require_utils();
-    var { getAccountBalance, getLiquidTotal } = require_balance();
-    var { buildDataSnapshot } = require_snapshot();
-    async function buildChatPrompt2(app, settings, qData) {
-      const { lines, totalCapital, curMonth, curYear } = await buildDataSnapshot(app, settings);
-      const sym = settings.homeCurrencySymbol;
-      const personalCtx = (settings.personalContext ?? "").trim();
-      let strategyText = "";
-      const stratFile = app.vault.getAbstractFileByPath(settings.strategyPath);
-      if (stratFile) strategyText = await app.vault.read(stratFile);
-      const qLabels = { investExp: "Investing experience", goals: "Goals", obligations: "Obligations", concerns: "Concerns / risks" };
-      const qLines = [];
-      if (qData) {
-        for (const [k, v] of Object.entries(qData)) {
-          if (v && v.trim()) qLines.push(`- ${qLabels[k] || k}: ${v.trim()}`);
-        }
-      }
-      const prompt = [
-        `# Role`,
-        `You are a personal finance advisor and capital growth consultant.`,
-        ``,
-        personalCtx ? `# User Profile
-${personalCtx}
-` : "",
-        qLines.length > 0 ? `# Additional Context
-${qLines.join("\n")}
-` : "",
-        strategyText ? `# Current Strategy
-${strategyText}
-
----` : "",
-        `# Financial Data \u2014 ${curMonth} ${curYear}`,
-        ``,
-        ...lines,
-        `---`,
-        ``,
-        `Total capital: **${fmt(totalCapital)} ${sym}**`,
-        ``,
-        `Review the data above. Briefly summarize what you see \u2014 capital state, any notable changes or concerns. Then ask: "What would you like to focus on?"`,
-        ``,
-        `_Key files: strategy \u2192 \`${settings.strategyPath}\`_`
-      ].filter(Boolean);
-      return prompt.join("\n");
-    }
-    function buildAgentPrompt(settings, qData, accounts, allLedger) {
-      const personalCtx = (settings.personalContext ?? "").trim();
-      const sym = settings.homeCurrencySymbol;
-      const liquidTotal = getLiquidTotal(settings, accounts, allLedger);
-      const qLabels = { investExp: "Investing experience", goals: "Goals", obligations: "Obligations", concerns: "Concerns / risks" };
-      const qLines = [];
-      if (qData) {
-        for (const [k, v] of Object.entries(qData)) {
-          if (v && v.trim()) qLines.push(`- ${qLabels[k] || k}: ${v.trim()}`);
-        }
-      }
-      const prompt = [
-        `# Role`,
-        `You are a personal finance advisor and capital growth consultant.`,
-        `You have access to the user's Obsidian vault with financial data.`,
-        ``,
-        personalCtx ? `# User Profile
-${personalCtx}
-` : "",
-        qLines.length > 0 ? `# Additional Context
-${qLines.join("\n")}
-` : "",
-        `# Data Location`,
-        `Read the following files to understand the user's financial position:`,
-        ``,
-        `- **Cashflow categories**: \`${settings.categoriesFolder}/\` \u2014 each .md file has YAML frontmatter with type (Income/Needs/Wants), monthly values (m01-m12)`,
-        `- **Assets**: \`${settings.assetsFolder}/\` \u2014 each .md file has frontmatter (type, currency, qty, price) + log lines in body (YYYY-MM-DD | op | qty | price)`,
-        `- **Strategy**: \`${settings.strategyPath}\` \u2014 current strategy document (may not exist yet)`,
-        `- **Dashboard note**: \`${settings.dashboardPath}\``,
-        ``,
-        `# Accounts`,
-        ...accounts && accounts.length > 0 ? [accounts.map((a) => `${a.name} ${fmt(getAccountBalance(a, allLedger || []))}${a.locked ? " \u{1F512}" : ""}`).join(", ") + ` \u2014 Total: ${fmt(liquidTotal)} ${sym}`] : [`Bank ${fmt(settings.liquidBank ?? 0)}, Broker ${fmt(settings.liquidBrokerCash ?? 0)}, Cash ${fmt(settings.liquidCash ?? 0)}, Business ${fmt(settings.liquidBusiness ?? 0)} \u2014 Total: ${fmt(liquidTotal)} ${sym}`],
-        ``,
-        `# Ledger`,
-        `Financial transaction log: \`${settings.ledgerFolder || "finance/Data"}/ledger-*.jsonl\``,
-        ``,
-        `# Instructions`,
-        `1. Read the asset files and category files to understand the current state`,
-        `2. Consider BOTH invested assets AND liquid pools \u2014 total capital is assets + liquid`,
-        `3. Summarize what you see \u2014 capital structure, cashflow health, portfolio status`,
-        `4. Ask: "What would you like to focus on?"`,
-        ``,
-        `When making changes to files, follow the existing format exactly.`
-      ].filter(Boolean);
-      return prompt.join("\n");
-    }
-    module2.exports = { buildChatPrompt: buildChatPrompt2, buildAgentPrompt };
-  }
-});
-
-// src/modals/insights.js
-var require_insights = __commonJS({
-  "src/modals/insights.js"(exports2, module2) {
-    var { Modal: Modal2 } = require("obsidian");
-    var { readAccounts: readAccounts2 } = require_io2();
-    var { readLedgerMultiYear: readLedgerMultiYear2 } = require_io();
-    var { buildChatPrompt: buildChatPrompt2, buildAgentPrompt } = require_prompts();
-    var InsightsModal = class extends Modal2 {
-      constructor(app, settings) {
-        super(app);
-        this.settings = settings;
-        this.qData = {};
-        this.screen = 0;
-      }
-      onOpen() {
-        this.render();
-      }
-      render() {
-        const { contentEl } = this;
-        contentEl.empty();
-        contentEl.addClass("pc-insights-modal");
-        if (this.screen === 0) this.renderContextScreen(contentEl);
-        else this.renderCardsScreen(contentEl);
-      }
-      // ── Screen 1: Optional context questionnaire ──
-      renderContextScreen(el) {
-        el.createEl("div", { cls: "pc-insights-title", text: "Prepare Analysis" });
-        el.createEl("p", {
-          cls: "pc-insights-desc",
-          text: "Help the AI understand your situation better. Optional \u2014 skip if you prefer."
-        });
-        const form = el.createDiv({ cls: "pc-insights-context-form" });
-        const questions = [
-          ["investExp", "Investing experience?", "e.g. beginner, 3 years active"],
-          ["goals", "What are your goals?", "e.g. passive income, early retirement"],
-          ["obligations", "What are your obligations?", "e.g. mortgage 30k/mo, IP tax"],
-          ["concerns", "Concerns / risks?", "e.g. inflation, job instability"]
-        ];
-        for (const [key, label, placeholder] of questions) {
-          const row = form.createDiv({ cls: "pc-insights-q-row" });
-          row.createEl("label", { cls: "pc-insights-q-label", text: label });
-          const inp = row.createEl("input", { type: "text", placeholder, cls: "personal-capital-input" });
-          if (this.qData[key]) inp.value = this.qData[key];
-          inp.addEventListener("input", () => {
-            this.qData[key] = inp.value;
-          });
-        }
-        form.createEl("p", {
-          cls: "pc-insights-q-hint",
-          text: "These answers are added to the prompt only. Nothing is saved or shared."
-        });
-        const nav = el.createDiv({ cls: "pc-insights-nav" });
-        const skipBtn = nav.createEl("button", { cls: "pc-insights-nav-btn", text: "Skip \u2192" });
-        skipBtn.onclick = () => {
-          this.screen = 1;
-          this.render();
-        };
-        const nextBtn = nav.createEl("button", { cls: "pc-insights-nav-btn mod-cta", text: "Continue \u2192" });
-        nextBtn.onclick = () => {
-          this.screen = 1;
-          this.render();
-        };
-      }
-      // ── Screen 2: Chat / Agent cards ──
-      renderCardsScreen(el) {
-        el.createEl("div", { cls: "pc-insights-title", text: "Choose AI mode" });
-        el.createEl("p", {
-          cls: "pc-insights-desc",
-          text: "No data is shared automatically."
-        });
-        const cards = el.createDiv({ cls: "pc-insights-cards" });
-        const chatCard = cards.createDiv({ cls: "pc-insights-card" });
-        chatCard.createEl("div", { cls: "pc-insights-card-icon", text: "\u{1F4AC}" });
-        chatCard.createEl("div", { cls: "pc-insights-card-title", text: "AI Chat" });
-        chatCard.createEl("p", {
-          cls: "pc-insights-card-desc",
-          text: "Copy prompt with all your data to paste into Claude, ChatGPT, or any AI chat."
-        });
-        const chatStatus = chatCard.createDiv({ cls: "pc-insights-card-status" });
-        const chatBtn = chatCard.createEl("button", { cls: "pc-insights-card-btn mod-cta", text: "Copy prompt" });
-        chatBtn.onclick = async () => {
-          chatBtn.disabled = true;
-          chatStatus.textContent = "Building\u2026";
-          try {
-            const ctx = await buildChatPrompt2(this.app, this.settings, this.qData);
-            await navigator.clipboard.writeText(ctx);
-            await this._savePrompt(ctx, "chat_prompt.md");
-            chatStatus.textContent = "\u2713 Copied!";
-            chatStatus.classList.add("pc-insights-status--ok");
-            chatBtn.textContent = "\u2713 Copied";
-            setTimeout(() => this.close(), 1200);
-          } catch (e) {
-            chatStatus.textContent = "Error: " + e.message;
-            chatBtn.disabled = false;
-          }
-        };
-        const agentCard = cards.createDiv({ cls: "pc-insights-card" });
-        agentCard.createEl("div", { cls: "pc-insights-card-icon", text: "\u{1F916}" });
-        agentCard.createEl("div", { cls: "pc-insights-card-title", text: "AI Agent" });
-        agentCard.createEl("p", {
-          cls: "pc-insights-card-desc",
-          text: "Copy prompt with vault paths for Cursor, Claude Code, Copilot, or any agent with file access."
-        });
-        const agentStatus = agentCard.createDiv({ cls: "pc-insights-card-status" });
-        const agentBtn = agentCard.createEl("button", { cls: "pc-insights-card-btn", text: "Copy prompt" });
-        agentBtn.onclick = async () => {
-          agentBtn.disabled = true;
-          agentStatus.textContent = "Building\u2026";
-          try {
-            const accts = await readAccounts2(this.app, this.settings);
-            const ledg = await readLedgerMultiYear2(this.app, this.settings, [(/* @__PURE__ */ new Date()).getFullYear()]);
-            const ctx = buildAgentPrompt(this.settings, this.qData, accts, ledg);
-            await navigator.clipboard.writeText(ctx);
-            await this._savePrompt(ctx, "agent_prompt.md");
-            agentStatus.textContent = "\u2713 Copied!";
-            agentStatus.classList.add("pc-insights-status--ok");
-            agentBtn.textContent = "\u2713 Copied";
-            setTimeout(() => this.close(), 1200);
-          } catch (e) {
-            agentStatus.textContent = "Error: " + e.message;
-            agentBtn.disabled = false;
-          }
-        };
-        const nav = el.createDiv({ cls: "pc-insights-nav" });
-        const backBtn = nav.createEl("button", { cls: "pc-insights-nav-btn", text: "\u2190 Back" });
-        backBtn.onclick = () => {
-          this.screen = 0;
-          this.render();
-        };
-        const tips = el.createDiv({ cls: "pc-insights-tips" });
-        tips.createEl("p", { text: "\u{1F4A1} Adjust the prompt as you like \u2014 ask anything about your finances." });
-        tips.createEl("p", { text: "\u26A0\uFE0F AI may make mistakes. Don't follow recommendations blindly \u2014 it's always your call." });
-      }
-      async _savePrompt(ctx, fileName) {
-        const aiDir = this.settings.categoriesFolder.replace(/categories\/?$/, "ai_context");
-        if (!this.app.vault.getAbstractFileByPath(aiDir)) {
-          await this.app.vault.createFolder(aiDir).catch(() => {
-          });
-        }
-        const outPath = `${aiDir}/${fileName}`;
-        const existing = this.app.vault.getAbstractFileByPath(outPath);
-        if (existing) await this.app.vault.modify(existing, ctx);
-        else await this.app.vault.create(outPath, ctx);
-      }
-    };
-    module2.exports = { InsightsModal };
-  }
-});
-
-// src/ui/analysis.js
-var require_analysis = __commonJS({
-  "src/ui/analysis.js"(exports2, module2) {
-    function renderAnalysisBlock(container, app, settings) {
-      const { InsightsModal } = require_insights();
-      const desc = container.createEl("p", { cls: "pc-analysis-desc" });
-      desc.textContent = "Need insights on your capital? Prepare a prompt for your AI.";
-      const btnRow = container.createDiv({ cls: "pc-analysis-btn-row" });
-      const btn = btnRow.createEl("button", {
-        cls: "pc-analysis-btn",
-        text: "Prepare Analysis"
-      });
-      btn.onclick = () => new InsightsModal(app, settings).open();
-      const tip = container.createDiv({ cls: "pc-analysis-tip" });
-      tip.createEl("span", { text: "Adjust the prompt as you like. This tool does not provide investment recommendations \u2014 always use your own judgment." });
-    }
-    module2.exports = { renderAnalysisBlock };
-  }
-});
-
-// src/ui/wants.js
-var require_wants = __commonJS({
-  "src/ui/wants.js"(exports2, module2) {
-    var { fmt, getCurrentMonthKey, makeInteractive, killWheelChange } = require_utils();
-    var { readWantsQueue, writeWantsQueue, cleanupDoneItems } = require_wants_queue();
-    function renderWantsQueue(container, app, settings, refreshDashboard) {
-      let items = [];
-      let saving = false;
-      const wrap = container.createDiv({ cls: "pc-wq-wrap" });
-      const save = async () => {
-        if (saving) return;
-        saving = true;
-        await writeWantsQueue(app, settings, items);
-        saving = false;
-      };
-      const rebuildList = () => {
-        listEl.empty();
-        const sym = settings.homeCurrencySymbol;
-        const currentMk = getCurrentMonthKey();
-        for (let i = 0; i < items.length; i++) {
-          const it = items[i];
-          const isDone = !!it.done;
-          const row = listEl.createDiv({ cls: `pc-wq-item ${isDone ? "pc-wq-item--done" : ""}` });
-          const check = row.createEl("span", { cls: "pc-wq-check", text: isDone ? "\u2611" : "\u2610" });
-          makeInteractive(check, "checkbox");
-          check.onclick = async (e) => {
-            e.stopPropagation();
-            if (isDone) {
-              it.done = null;
-            } else {
-              it.done = currentMk;
-            }
-            await save();
-            rebuildList();
-            updateFooter();
-          };
-          row.createEl("span", { cls: "pc-wq-name", text: it.name });
-          row.createEl("span", { cls: "pc-wq-cost", text: `${fmt(it.cost)} ${sym}` });
-          const rm = row.createEl("span", { cls: "pc-wq-rm", text: "\xD7" });
-          makeInteractive(rm);
-          rm.onclick = async (e) => {
-            e.stopPropagation();
-            items.splice(i, 1);
-            await save();
-            rebuildList();
-            updateFooter();
-          };
-        }
-        if (items.length === 0) {
-          listEl.createEl("span", { cls: "pc-wq-empty", text: "No planned purchases" });
-        }
-      };
-      const updateFooter = () => {
-        const pending = items.filter((it) => !it.done);
-        const total = pending.reduce((s, it) => s + it.cost, 0);
-        const sym = settings.homeCurrencySymbol;
-        footerEl.textContent = pending.length > 0 ? `${pending.length} item${pending.length > 1 ? "s" : ""} \xB7 ${fmt(total)} ${sym}` : "";
-      };
-      const hdr = wrap.createDiv({ cls: "pc-wq-header" });
-      hdr.createEl("span", { cls: "pc-wq-title", text: "Wants Queue" });
-      const addBtn = hdr.createEl("span", { cls: "pc-wq-add", text: "+" });
-      makeInteractive(addBtn);
-      const listEl = wrap.createDiv({ cls: "pc-wq-list" });
-      const footerEl = wrap.createDiv({ cls: "pc-wq-footer" });
-      let addRowEl = null;
-      addBtn.onclick = () => {
-        if (addRowEl) {
-          addRowEl.remove();
-          addRowEl = null;
-          return;
-        }
-        addRowEl = wrap.createDiv({ cls: "pc-wq-add-row" });
-        const nameIn = addRowEl.createEl("input", { type: "text", placeholder: "What do you want?", cls: "pc-wq-input" });
-        const costIn = addRowEl.createEl("input", { type: "number", placeholder: "Cost", cls: "pc-wq-input pc-wq-input--cost" });
-        killWheelChange(costIn);
-        const okBtn = addRowEl.createEl("button", { text: "Add", cls: "pc-wq-ok" });
-        const doAdd = async () => {
-          const name = nameIn.value.trim();
-          const cost = parseFloat(costIn.value) || 0;
-          if (!name || cost <= 0) return;
-          items.push({ name, cost, done: null });
-          await save();
-          addRowEl.remove();
-          addRowEl = null;
-          rebuildList();
-          updateFooter();
-        };
-        okBtn.onclick = doAdd;
-        costIn.onkeydown = (e) => {
-          if (e.key === "Enter") doAdd();
-        };
-        nameIn.onkeydown = (e) => {
-          if (e.key === "Enter") costIn.focus();
-        };
-        wrap.insertBefore(addRowEl, footerEl);
-        nameIn.focus();
-      };
-      readWantsQueue(app, settings).then((loaded) => {
-        items = cleanupDoneItems(loaded);
-        if (items.length !== loaded.length) save();
-        rebuildList();
-        updateFooter();
-      });
-    }
-    module2.exports = { renderWantsQueue };
-  }
-});
-
 // src/modals/onboarding.js
 var require_onboarding = __commonJS({
   "src/modals/onboarding.js"(exports2, module2) {
@@ -3933,7 +3011,7 @@ var require_onboarding = __commonJS({
           await this.app.vault.createFolder(accountsFolder).catch(() => {
           });
         }
-        const acctCur = cur ? cur.code : this.plugin.settings.homeCurrency || "RUB";
+        const acctCur = cur ? cur.code : this.plugin.settings.homeCurrency || "EUR";
         const poolDefs = [
           { val: this.data.liquidBank, name: "Bank", type: "bank", liquid: true },
           { val: this.data.liquidBrokerCash, name: "Broker Cash", type: "broker", liquid: true },
@@ -4268,10 +3346,7 @@ var require_dashboard = __commonJS({
     var { renderBudgetCards } = require_cards();
     var { renderProjected } = require_projected();
     var { renderCapitalChart } = require_chart();
-    var { renderBaskets } = require_baskets2();
     var { renderAssetCards } = require_assets();
-    var { renderAnalysisBlock } = require_analysis();
-    var { renderWantsQueue } = require_wants();
     async function renderDashboard2(app, settings, container, plugin) {
       container.empty();
       container.addClass("pc-dashboard");
@@ -4345,8 +3420,6 @@ var require_dashboard = __commonJS({
       b1.createEl("div", { cls: "pc-block-title", text: "Budget \xB7 " + MONTH_SHORT[now.getMonth()] });
       const b1body = b1.createDiv({ cls: "pc-block-body pc-cards-grid" });
       renderBudgetCards(b1body, budget, sym);
-      const b1b = container.createDiv({ cls: "pc-block" });
-      renderWantsQueue(b1b, app, settings);
       const b2 = container.createDiv({ cls: "pc-block" });
       b2.createEl("div", { cls: "pc-block-title", text: "Projected \xB7 " + MONTH_SHORT[(now.getMonth() + 1) % 12] });
       const b2body = b2.createDiv({ cls: "pc-block-body" });
@@ -4356,12 +3429,7 @@ var require_dashboard = __commonJS({
       b3header.createEl("div", { cls: "pc-block-title", text: "Capital Growth" });
       const b3body = b3.createDiv({ cls: "pc-block-body" });
       renderCapitalChart(b3body, history, assets, settings, budget, accounts, allLedger);
-      renderBaskets(b3body, assets, settings, sym, app, plugin, accounts, allLedger);
       renderAssetCards(b3body, assets, settings, app, plugin, container);
-      const b4 = container.createDiv({ cls: "pc-block" });
-      b4.createEl("div", { cls: "pc-block-title", text: "Analysis Session" });
-      const b4body = b4.createDiv({ cls: "pc-block-body" });
-      renderAnalysisBlock(b4body, app, settings);
       const settingsBtn = container.createDiv({ cls: "pc-settings-link" });
       makeInteractive(settingsBtn);
       settingsBtn.createEl("span", { text: "\u2699" });
@@ -4957,7 +4025,7 @@ var require_account_create = __commonJS({
         const curWrap = form.createDiv();
         curWrap.createEl("label", { text: "Currency" });
         const curIn = curWrap.createEl("input", { type: "text", cls: "personal-capital-input" });
-        curIn.value = this.plugin.settings.homeCurrency || "RUB";
+        curIn.value = this.plugin.settings.homeCurrency || "EUR";
         curIn.maxLength = 8;
         const balWrap = form.createDiv();
         balWrap.createEl("label", { text: "Initial balance" });
@@ -4995,7 +4063,7 @@ var require_account_create = __commonJS({
             await this.app.vault.createFolder(folder).catch(() => {
             });
           }
-          const currency = (curIn.value.trim() || this.plugin.settings.homeCurrency || "RUB").toUpperCase();
+          const currency = (curIn.value.trim() || this.plugin.settings.homeCurrency || "EUR").toUpperCase();
           const balance = toNum(balIn.value) || 0;
           const liquid = !!liquidIn.checked;
           const locked = !!lockedIn.checked;
@@ -5091,7 +4159,7 @@ var require_settings = __commonJS({
           })
         );
         containerEl.createEl("h4", { text: "FX rates \u2192 home currency" });
-        new Setting(containerEl).setName("Auto-fetch FX rates").setDesc("On \u21BB Update prices: CBR for RUB home, Yahoo otherwise. Manual overrides always win.").addToggle(
+        new Setting(containerEl).setName("Auto-fetch FX rates").setDesc("On \u21BB Update prices: fetches rates from Yahoo Finance. Manual overrides always win.").addToggle(
           (t) => t.setValue(this.plugin.settings.fxAutoFetch !== false).onChange(async (v) => {
             this.plugin.settings.fxAutoFetch = v;
             await this.plugin.saveSettings();
@@ -5128,7 +4196,7 @@ var require_settings = __commonJS({
         containerEl.createEl("div", { cls: "pc-settings-fx-subhead", text: "Auto (read-only)" });
         const autoRates = this.plugin.settings.fxRatesAuto ?? {};
         const autoGrid = containerEl.createDiv({ cls: "pc-settings-fx-grid" });
-        const home = String(this.plugin.settings.homeCurrency || "RUB").toUpperCase();
+        const home = String(this.plugin.settings.homeCurrency || "EUR").toUpperCase();
         const autoCodes = Object.keys(autoRates).filter((c) => c.toUpperCase() !== home).sort();
         if (autoCodes.length === 0) {
           autoGrid.createEl("span", { cls: "pc-text-muted", text: "No auto rates yet. Click Refresh or \u21BB Update prices." });
@@ -5411,7 +4479,7 @@ var require_migration = __commonJS({
             "---",
             `name: "${pm.name}"`,
             `type: ${pm.type}`,
-            `currency: ${settings.homeCurrency || "RUB"}`,
+            `currency: ${settings.homeCurrency || "EUR"}`,
             `liquid: ${settings[pm.liq] !== false}`,
             `locked: ${settings[pm.liq] === false}`,
             `initial_balance: ${val}`,
@@ -5475,7 +4543,6 @@ var { runMigration } = require_migration();
 var { recalcAsset } = require_recalc();
 var { updateAllAssetPrices } = require_prices();
 var { readAccounts } = require_io2();
-var { buildChatPrompt } = require_prompts();
 var { readLedgerMultiYear } = require_io();
 var { buildCashflowRows } = require_cashflow();
 var DASHBOARD_NOTE_CONTENT = `---
@@ -5606,21 +4673,6 @@ module.exports = class PersonalCapitalPlugin extends Plugin {
         new AddTransactionModal(this.app, this, accounts).open();
       }
     });
-    this.addCommand({
-      id: "pc-cashflow-erase-and-archive",
-      name: "Cashflow: Erase & archive",
-      callback: () => this.confirmEraseAndArchive()
-    });
-    this.addCommand({
-      id: "pc-copy-analysis-context",
-      name: "Copy analysis context (for AI)",
-      callback: async () => {
-        showNotice("Building context\u2026");
-        const ctx = await buildChatPrompt(this.app, this.settings);
-        await navigator.clipboard.writeText(ctx);
-        showNotice("\u2713 Analysis context copied to clipboard");
-      }
-    });
     this.addSettingTab(new PersonalCapitalSettingTab(this.app, this));
   }
   // ── Force preview + read-only on any leaf showing Dashboard.md ──
@@ -5714,59 +4766,5 @@ module.exports = class PersonalCapitalPlugin extends Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
-  }
-  // ── Cashflow archive ──
-  confirmEraseAndArchive() {
-    const modal = new Modal(this.app);
-    modal.titleEl.setText("Erase & archive cashflow");
-    modal.contentEl.createEl("p", { text: "Export current year to archive, then clear all monthly values?" });
-    const btns = modal.contentEl.createDiv({ cls: "personal-capital-buttons" });
-    const yes = btns.createEl("button", { text: "Archive & clear", cls: "mod-cta" });
-    const no = btns.createEl("button", { text: "Cancel" });
-    no.onclick = () => modal.close();
-    yes.onclick = async () => {
-      modal.close();
-      await this.exportCashflowToArchive();
-    };
-    modal.open();
-  }
-  async exportCashflowToArchive() {
-    const year = getCurrentYear();
-    const ledger = await readLedgerMultiYear(this.app, this.settings, [year]);
-    const rows = buildCashflowRows(this.app, this.settings, ledger);
-    const header = ["Type", "Category", "Recurring", "Projected", "Total", ...MONTH_NAMES];
-    const mdRows = [
-      "| " + header.join(" | ") + " |",
-      "|" + header.map(() => "---").join("|") + "|",
-      ...rows.map((r) => {
-        const cells = [
-          r.type,
-          (r.emoji ? r.emoji + " " : "") + r.category,
-          r.recurring ? "\u2713" : "",
-          r.projected != null ? String(r.projected) : "",
-          String(r.total),
-          ...MONTH_KEYS.map((k) => r.months[k] != null ? String(r.months[k]) : "")
-        ];
-        return "| " + cells.join(" | ") + " |";
-      })
-    ];
-    const archiveDir = this.settings.archiveFolder;
-    if (!this.app.vault.getAbstractFileByPath(archiveDir)) {
-      await this.app.vault.createFolder(archiveDir);
-    }
-    const outPath = `${archiveDir}/${year}_cashflow.md`;
-    const content = `# Cashflow ${year}
-
-` + mdRows.join("\n") + "\n";
-    const existing = this.app.vault.getAbstractFileByPath(outPath);
-    existing ? await this.app.vault.modify(existing, content) : await this.app.vault.create(outPath, content);
-    const folder = this.settings.categoriesFolder.toLowerCase().replace(/\/$/, "");
-    const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.toLowerCase().startsWith(folder + "/"));
-    for (const f of files) {
-      await this.app.fileManager.processFrontMatter(f, (fm) => {
-        for (const k of MONTH_KEYS) fm[k] = null;
-      });
-    }
-    showNotice(`Archived to ${outPath} and cleared.`);
   }
 };
